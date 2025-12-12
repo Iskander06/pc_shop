@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="hero-banner mb-5 p-5 rounded-4 text-white">
+    <h1 class="display-5 fw-bold">Магазин компьютерной техники PC Shop</h1>
+    <p class="fs-5 mt-3">
+      Собери свой идеальный игровой или рабочий ПК. Мы поможем с выбором комплектующих,
+      сборкой и настройкой.
+    </p>
+    <a href="{{ url_for('catalog') }}" class="btn btn-light btn-lg mt-3">
+      Перейти к ассортименту
+    </a>
+  </div>
+
+  <h2 class="mb-4 text-center">Акции и предложения</h2>
+  <div class="row row-cols-1 row-cols-md-3 g-4">
+    {% for p in promos %}
+    <div class="col">
+      <div class="card h-100 shadow-sm promo-card">
+        <div class="card-body">
+          <h5 class="card-title">{{ p.title }}</h5>
+          <p class="card-text">{{ p.text }}</p>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+{% endblock %}

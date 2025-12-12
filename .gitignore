@@ -1,0 +1,22 @@
+# Виртуальное окружение
+venv/
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Логи
+*.log
+
+# VS Code / IDE
+.vscode/
+.idea/
+
+# Flask / uploads
+instance/
+*.sqlite3
+static/uploads/

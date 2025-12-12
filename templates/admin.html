@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1 class="mb-4">Админ-панель</h1>
+
+  <a href="{{ url_for('admin_add_product') }}" class="btn btn-primary mb-4">
+    Добавить товар
+  </a>
+
+  <div class="row g-4">
+    <div class="col-lg-6">
+      <div class="card shadow-sm mb-4">
+        <div class="card-body">
+          <h3 class="card-title mb-3">Товары</h3>
+          {% if products %}
+            <table class="table table-hover align-middle">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Название</th>
+                  <th>Цена</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for p in products %}
+                <tr>
+                  <td>{{ p.id }}</td>
+                  <td>{{ p.name }}</td>
+                  <td>{{ p.price }} ₸</td>
+                  <td class="text-end">
+                    <form method="post" action="{{ url_for('admin_delete_product', product_id=p.id) }}" onsubmit="return confirm('Удалить товар {{ p.name }}?');">
+                      <button class="btn btn-sm btn-outline-danger">Удалить</button>
+                    </form>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          {% else %}
+            <p>Товаров ещё нет.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-6">
+      <div class="card shadow-sm mb-4">
+        <div class="card-body">
+          <h3 class="card-title mb-3">Пользователи</h3>
+          {% if users %}
+            <table class="table table-hover align-middle">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Email</th>
+                  <th>ФИО</th>
+                  <th>Роль</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for u in users %}
+                <tr>
+                  <td>{{ u.id }}</td>
+                  <td>{{ u.email }}</td>
+                  <td>{{ u.full_name() }}</td>
+                  <td>{{ u.role }}</td>
+                  <td class="text-end">
+                    {% if u.role != 'admin' %}
+                      <form method="post" action="{{ url_for('admin_toggle_block', user_id=u.id) }}">
+                        {% if u.is_blocked %}
+                          <button class="btn btn-sm btn-success">Разблокировать</button>
+                        {% else %}
+                          <button class="btn btn-sm btn-outline-danger">Заблокировать</button>
+                        {% endif %}
+                      </form>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          {% else %}
+            <p>Пользователей ещё нет.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mt-4">
+    <div class="card-body">
+      <h3 class="card-title mb-3">Заказы</h3>
+      {% if orders %}
+        <div class="table-responsive">
+          <table class="table table-hover align-middle">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Пользователь</th>
+                <th>Email</th>
+                <th>Статус</th>
+                <th>Подтверждён</th>
+                <th>Состав</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for o in orders %}
+              <tr>
+                <td>#{{ o.id }}</td>
+                <td>{{ o.user.full_name() }}</td>
+                <td>{{ o.user.email }}</td>
+                <td>
+                  {% if o.status == 'new' %}
+                    <span class="badge bg-secondary">Новый</span>
+                  {% elif o.status == 'in_progress' %}
+                    <span class="badge bg-warning text-dark">В работе</span>
+                  {% elif o.status == 'completed' %}
+                    <span class="badge bg-success">Выполнен</span>
+                  {% else %}
+                    {{ o.status }}
+                  {% endif %}
+                </td>
+                <td>
+                  {% if o.confirmed %}
+                    <span class="badge bg-success">Да</span>
+                  {% else %}
+                    <span class="badge bg-secondary">Нет</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <ul class="mb-0 small">
+                    {% for item in o.items %}
+                    <li>{{ item.product.name }} — {{ item.quantity }} шт.</li>
+                    {% endfor %}
+                  </ul>
+                </td>
+                <td class="text-end">
+                  <form method="post" action="{{ url_for('admin_update_order', order_id=o.id) }}" class="d-flex flex-column gap-1">
+                    <select name="status" class="form-select form-select-sm">
+                      <option value="new" {% if o.status == 'new' %}selected{% endif %}>Новый</option>
+                      <option value="in_progress" {% if o.status == 'in_progress' %}selected{% endif %}>В работе</option>
+                      <option value="completed" {% if o.status == 'completed' %}selected{% endif %}>Выполнен</option>
+                    </select>
+                    <div class="form-check mt-1">
+                      <input class="form-check-input" type="checkbox" name="confirmed" id="confirm_{{ o.id }}" {% if o.confirmed %}checked{% endif %}>
+                      <label class="form-check-label small" for="confirm_{{ o.id }}">
+                        Подтверждён
+                      </label>
+                    </div>
+                    <button class="btn btn-sm btn-primary mt-1">Сохранить</button>
+                  </form>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p>Заказов пока нет.</p>
+      {% endif %}
+    </div>
+  </div>
+
+{% endblock %}

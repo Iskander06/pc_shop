@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center fade-in-up">
+  <div class="col-md-8 col-lg-6">
+    <div class="card shadow-lg border-0 auth-card">
+      <div class="card-body">
+        <h2 class="card-title mb-3 text-center">Регистрация</h2>
+        <p class="text-muted text-center mb-4">Создайте аккаунт, чтобы оформлять заказы</p>
+
+        <form method="post">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label">Фамилия</label>
+              <input type="text" name="last_name" class="form-control"
+                     value="{{ form_data.last_name or '' }}" required>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Имя</label>
+              <input type="text" name="first_name" class="form-control"
+                     value="{{ form_data.first_name or '' }}" required>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Отчество</label>
+              <input type="text" name="middle_name" class="form-control"
+                     value="{{ form_data.middle_name or '' }}" required>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">Город</label>
+              <select name="city" class="form-select" required>
+                <option value="">Выберите город</option>
+                {% for c in CITIES %}
+                  <option value="{{ c }}" {% if form_data.city == c %}selected{% endif %}>{{ c }}</option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">Телефон (Казахстан)</label>
+              <input type="tel" name="phone" class="form-control"
+                     placeholder="+7XXXXXXXXXX"
+                     value="{{ form_data.phone or '' }}" required>
+            </div>
+
+            <div class="col-12">
+              <label class="form-label">Email</label>
+              <input type="email" name="email" class="form-control"
+                     value="{{ form_data.email or '' }}" required>
+              <div class="form-text">
+                Используйте реальные почтовые сервисы (.com, .ru, .kz, .mail и т.д.)
+              </div>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">Пароль</label>
+              <input type="password" name="password" class="form-control"
+                     minlength="6" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Повторите пароль</label>
+              <input type="password" name="password2" class="form-control"
+                     minlength="6" required>
+            </div>
+          </div>
+
+          <button class="btn btn-primary w-100 mt-4 btn-gradient">
+            Зарегистрироваться
+          </button>
+        </form>
+
+        <p class="text-center mt-3 mb-0">
+          Уже есть аккаунт?
+          <a href="{{ url_for('login') }}">Войти</a>
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

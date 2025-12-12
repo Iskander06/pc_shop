@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1 class="mb-4">Корзина</h1>
+
+  {% if items %}
+    <table class="table align-middle">
+      <thead>
+        <tr>
+          <th>Товар</th>
+          <th>Количество</th>
+          <th>Цена за штуку</th>
+          <th>Сумма</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr>
+          <td>{{ item.product.name }}</td>
+          <td>{{ item.quantity }}</td>
+          <td>{{ item.product.price }} ₸</td>
+          <td>{{ item.product.price * item.quantity }} ₸</td>
+          <td>
+            <form method="post" action="{{ url_for('remove_from_cart', item_id=item.id) }}">
+              <button class="btn btn-sm btn-outline-danger">Удалить</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="d-flex justify-content-between align-items-center">
+      <h4>Итого: {{ total }} ₸</h4>
+      <form method="post" action="{{ url_for('checkout') }}">
+        <button class="btn btn-success">Оформить заказ</button>
+      </form>
+    </div>
+  {% else %}
+    <p>Ваша корзина пуста.</p>
+  {% endif %}
+{% endblock %}

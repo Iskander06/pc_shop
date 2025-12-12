@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center fade-in-up">
+  <div class="col-md-8 col-lg-6">
+    <div class="card shadow-lg border-0 auth-card">
+      <div class="card-body">
+        <h2 class="card-title mb-3 text-center">Редактирование профиля</h2>
+
+        <form method="post" enctype="multipart/form-data">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label">Фамилия</label>
+              <input type="text" name="last_name" class="form-control"
+                     value="{{ user.last_name }}" required>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Имя</label>
+              <input type="text" name="first_name" class="form-control"
+                     value="{{ user.first_name }}" required>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Отчество</label>
+              <input type="text" name="middle_name" class="form-control"
+                     value="{{ user.middle_name }}" required>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">Город</label>
+              <select name="city" class="form-select" required>
+                {% for c in CITIES %}
+                  <option value="{{ c }}" {% if user.city == c %}selected{% endif %}>{{ c }}</option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">Телефон (Казахстан)</label>
+              <input type="tel" name="phone" class="form-control"
+                     placeholder="+7XXXXXXXXXX"
+                     value="{{ user.phone or '' }}" required>
+            </div>
+
+            <div class="col-12">
+              <label class="form-label">Аватар</label>
+              <input type="file" name="avatar" class="form-control">
+              <div class="form-text">
+                Разрешены: png, jpg, jpeg, gif
+              </div>
+            </div>
+          </div>
+
+          <button class="btn btn-primary w-100 mt-4 btn-gradient">
+            Сохранить
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

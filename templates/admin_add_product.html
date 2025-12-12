@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1 class="mb-4">Добавление товара</h1>
+
+  <form method="post" enctype="multipart/form-data">
+    <div class="mb-3">
+      <label class="form-label">Название товара*</label>
+      <input type="text" name="name" class="form-control" required>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Полное описание*</label>
+      <textarea name="description" class="form-control" rows="4" required></textarea>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Цена (тенге)*</label>
+      <input type="number" name="price" class="form-control" required>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Фото товара</label>
+      <input type="file" name="image" class="form-control">
+      <small class="text-muted">Разрешённые форматы: png, jpg, jpeg, gif</small>
+    </div>
+
+    <button type="submit" class="btn btn-success">Сохранить</button>
+  </form>
+{% endblock %}
