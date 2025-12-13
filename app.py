@@ -21,6 +21,15 @@ from email.mime.text import MIMEText
 #             НАСТРОЙКИ
 # -----------------------------------
 
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+load_dotenv(os.path.join(BASE_DIR, ".env"))
+
+app = Flask(__name__)
+
+# SECRET KEY
+app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-key")
+
+
 # -----------------------------------
 #       НАСТРОЙКИ БАЗЫ ДАННЫХ
 # -----------------------------------
@@ -28,7 +37,7 @@ from email.mime.text import MIMEText
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if DATABASE_URL:
-    # Render / прод
+    # Render / production
     if DATABASE_URL.startswith("postgres://"):
         DATABASE_URL = DATABASE_URL.replace(
             "postgres://", "postgresql+psycopg://", 1
@@ -40,7 +49,7 @@ if DATABASE_URL:
 
     app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
 else:
-    # Локальная разработка
+    # Local development
     db_user = os.getenv("DB_USER", "postgres")
     db_pass = os.getenv("DB_PASS", "1234")
     db_host = os.getenv("DB_HOST", "localhost")
@@ -56,16 +65,22 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 print("DB URI:", app.config["SQLALCHEMY_DATABASE_URI"])
 
 
-# Загрузка файлов (фото товаров и аватары)
+# -----------------------------------
+#     ЗАГРУЗКА ФАЙЛОВ / SQLALCHEMY
+# -----------------------------------
+
 UPLOAD_FOLDER = os.path.join(app.static_folder, "uploads")
 AVATAR_FOLDER = os.path.join(UPLOAD_FOLDER, "avatars")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(AVATAR_FOLDER, exist_ok=True)
+
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["AVATAR_FOLDER"] = AVATAR_FOLDER
+
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
 
 db = SQLAlchemy(app)
+
 
 # Ссылка на ТГ-бота и данные для уведомлений из .env
 TG_BOT_LINK = os.getenv("TG_BOT_LINK", "https://t.me/your_bot_here")
