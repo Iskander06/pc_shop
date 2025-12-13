@@ -21,27 +21,40 @@ from email.mime.text import MIMEText
 #             НАСТРОЙКИ
 # -----------------------------------
 
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-load_dotenv(os.path.join(BASE_DIR, ".env"))
+# -----------------------------------
+#       НАСТРОЙКИ БАЗЫ ДАННЫХ
+# -----------------------------------
 
-app = Flask(__name__)
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-# SECRET_KEY берём из .env
-app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-key")
+if DATABASE_URL:
+    # Render / прод
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace(
+            "postgres://", "postgresql+psycopg://", 1
+        )
+    elif DATABASE_URL.startswith("postgresql://"):
+        DATABASE_URL = DATABASE_URL.replace(
+            "postgresql://", "postgresql+psycopg://", 1
+        )
 
-# Настройки PostgreSQL
-db_user = os.getenv("DB_USER", "postgres")
-db_pass = os.getenv("DB_PASS", "1234")
-db_host = os.getenv("DB_HOST", "localhost")
-db_port = os.getenv("DB_PORT", "5432")
-db_name = os.getenv("DB_NAME", "pc_shop")
+    app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+else:
+    # Локальная разработка
+    db_user = os.getenv("DB_USER", "postgres")
+    db_pass = os.getenv("DB_PASS", "1234")
+    db_host = os.getenv("DB_HOST", "localhost")
+    db_port = os.getenv("DB_PORT", "5432")
+    db_name = os.getenv("DB_NAME", "pc_shop")
 
-app.config["SQLALCHEMY_DATABASE_URI"] = (
-    f"postgresql+psycopg://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}"
-)
+    app.config["SQLALCHEMY_DATABASE_URI"] = (
+        f"postgresql+psycopg://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}"
+    )
+
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 print("DB URI:", app.config["SQLALCHEMY_DATABASE_URI"])
+
 
 # Загрузка файлов (фото товаров и аватары)
 UPLOAD_FOLDER = os.path.join(app.static_folder, "uploads")
@@ -826,48 +839,5 @@ def admin_update_order(order_id):
 # -----------------------------------
 
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
-
-        # Если админа ещё нет — создаём
-        if not User.query.filter_by(role="admin").first():
-            admin_user = User(
-                email="admin@pcshop.local",
-                password_hash=generate_password_hash("admin123"),
-                last_name="Админ",
-                first_name="Главный",
-                middle_name="Сайта",
-                city="Алматы",
-                role="admin",
-                public_id=str(uuid.uuid4()),
-                is_email_verified=True,
-            )
-            db.session.add(admin_user)
-
-        # Если нет ни одного товара — добавим примерные
-        if not Product.query.first():
-            sample_products = [
-                Product(
-                    name="Игровой ноутбук RTX",
-                    description="Мощный игровой ноутбук с видеокартой RTX.",
-                    price=550000,
-                    image=None,
-                ),
-                Product(
-                    name="Механическая клавиатура",
-                    description="RGB-подсветка, синие переключатели.",
-                    price=45000,
-                    image=None,
-                ),
-                Product(
-                    name="Игровая мышь",
-                    description="Удобная форма, настраиваемые DPI.",
-                    price=15000,
-                    image=None,
-                ),
-            ]
-            db.session.add_all(sample_products)
-
-        db.session.commit()
-
     app.run(debug=True)
+
