@@ -20,3 +20,6 @@ __pycache__/
 instance/
 *.sqlite3
 static/uploads/
+
+
+sendgrid_test.py

@@ -1,6 +1,24 @@
 {% extends "base.html" %}
 {% block content %}
   <h1 class="mb-4 fade-in-up">Личный кабинет</h1>
+  
+{# ===== БЛОК ПОДТВЕРЖДЕНИЯ EMAIL ===== #}
+{% if not user.is_email_verified %}
+  <div class="alert alert-warning fade-in-up d-flex align-items-center justify-content-between flex-wrap">
+    <div>
+      <strong>⚠ Email не подтверждён.</strong><br>
+      Некоторые функции (оформление заказов) недоступны.
+    </div>
+
+    <a href="{{ url_for('resend_verification') }}"
+       id="resendBtn"
+       class="btn btn-sm btn-outline-primary ms-2 mt-2 mt-md-0">
+      📩 Отправить письмо повторно
+      <span id="resendTimer"></span>
+    </a>
+  </div>
+{% endif %}
+
 
   <div class="row g-4 fade-in-up">
     <div class="col-md-5">
@@ -8,13 +26,15 @@
         <div class="card-body d-flex flex-column align-items-center">
           {% if user.avatar_image %}
             <img src="{{ url_for('static', filename=user.avatar_image) }}"
-                 class="rounded-circle mb-3" style="width: 120px; height: 120px; object-fit: cover;">
+                 class="rounded-circle mb-3"
+                 style="width: 120px; height: 120px; object-fit: cover;">
           {% else %}
             <div class="rounded-circle mb-3 d-flex align-items-center justify-content-center"
                  style="width: 120px; height: 120px; background:#e5e7eb; color:#6b7280; font-weight:600;">
               {{ user.first_name[0] }}{{ user.last_name[0] }}
             </div>
           {% endif %}
+
           <h5 class="card-title mb-1">{{ user.full_name() }}</h5>
           <p class="text-muted mb-3">{{ user.city }}</p>
 
@@ -40,9 +60,11 @@
           <div class="accordion-item">
             <h2 class="accordion-header" id="heading{{ order.id }}">
               <button class="accordion-button collapsed" type="button"
-                      data-bs-toggle="collapse" data-bs-target="#collapse{{ order.id }}">
+                      data-bs-toggle="collapse"
+                      data-bs-target="#collapse{{ order.id }}">
                 Заказ #{{ order.id }}
                 &nbsp;—&nbsp;
+
                 {% if order.status == 'new' %}
                   <span class="badge bg-secondary">Новый</span>
                 {% elif order.status == 'in_progress' %}
@@ -60,6 +82,7 @@
                 {% endif %}
               </button>
             </h2>
+
             <div id="collapse{{ order.id }}" class="accordion-collapse collapse"
                  data-bs-parent="#ordersAccordion">
               <div class="accordion-body">
@@ -81,4 +104,49 @@
       {% endif %}
     </div>
   </div>
+  <script>
+document.addEventListener("DOMContentLoaded", function () {
+  const btn = document.getElementById("resendBtn");
+  const timerSpan = document.getElementById("resendTimer");
+
+  if (!btn) return;
+
+  let cooldown = 60;
+  let lastClick = sessionStorage.getItem("lastEmailSend");
+
+  if (lastClick) {
+    let diff = Math.floor((Date.now() - lastClick) / 1000);
+    if (diff < cooldown) {
+      startTimer(cooldown - diff);
+    }
+  }
+
+  btn.addEventListener("click", function () {
+    sessionStorage.setItem("lastEmailSend", Date.now());
+    startTimer(cooldown);
+  });
+
+  function startTimer(seconds) {
+    btn.classList.add("disabled");
+    btn.setAttribute("aria-disabled", "true");
+
+    let remaining = seconds;
+    timerSpan.innerText = ` (${remaining} сек)`;
+
+    let interval = setInterval(() => {
+      remaining--;
+      timerSpan.innerText = ` (${remaining} сек)`;
+
+      if (remaining <= 0) {
+        clearInterval(interval);
+        btn.classList.remove("disabled");
+        btn.removeAttribute("aria-disabled");
+        timerSpan.innerText = "";
+        sessionStorage.removeItem("lastEmailSend");
+      }
+    }, 1000);
+  }
+});
+</script>
+
 {% endblock %}

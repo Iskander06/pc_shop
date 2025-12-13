@@ -4,3 +4,4 @@ python-dotenv>=1.0
 psycopg[binary]
 gunicorn
 requests
+sendgrid>=6.11.0

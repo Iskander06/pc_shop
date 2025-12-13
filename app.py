@@ -1,6 +1,7 @@
 import os
 import uuid
 import re
+from time import time
 from functools import wraps
 
 import requests
@@ -13,8 +14,14 @@ from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
-import smtplib
-from email.mime.text import MIMEText
+
+# SendGrid (опционально: если не установлен, будет фолбэк на "печать письма в консоль")
+try:
+    from sendgrid import SendGridAPIClient
+    from sendgrid.helpers.mail import Mail
+    SENDGRID_AVAILABLE = True
+except Exception:
+    SENDGRID_AVAILABLE = False
 
 
 # -----------------------------------
@@ -39,13 +46,9 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL:
     # Render / production
     if DATABASE_URL.startswith("postgres://"):
-        DATABASE_URL = DATABASE_URL.replace(
-            "postgres://", "postgresql+psycopg://", 1
-        )
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
     elif DATABASE_URL.startswith("postgresql://"):
-        DATABASE_URL = DATABASE_URL.replace(
-            "postgresql://", "postgresql+psycopg://", 1
-        )
+        DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 
     app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
 else:
@@ -61,7 +64,6 @@ else:
     )
 
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
 print("DB URI:", app.config["SQLALCHEMY_DATABASE_URI"])
 
 
@@ -82,19 +84,20 @@ ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
 db = SQLAlchemy(app)
 
 
-# Ссылка на ТГ-бота и данные для уведомлений из .env
+# -----------------------------------
+#       ПЕРЕМЕННЫЕ / ИНТЕГРАЦИИ
+# -----------------------------------
+
+# Telegram
 TG_BOT_LINK = os.getenv("TG_BOT_LINK", "https://t.me/your_bot_here")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Email настройки (для подтверждения почты)
-SMTP_HOST = os.getenv("SMTP_HOST")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
-SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+# Email via SendGrid
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+MAIL_FROM = os.getenv("MAIL_FROM")  # например: "no-reply@yourdomain.com"
 
-# Список разрешённых городов
+# Города
 CITIES = [
     "Алматы",
     "Астана",
@@ -111,6 +114,7 @@ CITIES = [
     "Петропавловск",
 ]
 
+
 # -----------------------------------
 #             МОДЕЛИ
 # -----------------------------------
@@ -119,20 +123,20 @@ class User(db.Model):
     __tablename__ = "users"
 
     id = db.Column(db.Integer, primary_key=True)
-    public_id = db.Column(db.String(36), unique=True, nullable=False)  # постоянный ID
+    public_id = db.Column(db.String(36), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
 
-    last_name = db.Column(db.String(100), nullable=False)   # фамилия
-    first_name = db.Column(db.String(100), nullable=False)  # имя
-    middle_name = db.Column(db.String(100), nullable=False) # отчество
+    last_name = db.Column(db.String(100), nullable=False)
+    first_name = db.Column(db.String(100), nullable=False)
+    middle_name = db.Column(db.String(100), nullable=False)
     city = db.Column(db.String(100), nullable=False)
 
     phone = db.Column(db.String(20), nullable=True)
     avatar_image = db.Column(db.String(255), nullable=True)
 
-    role = db.Column(db.String(10), default="user", nullable=False)  # "user" или "admin"
-    is_blocked = db.Column(db.Boolean, default=False, nullable=False)  # заблокирован ли пользователь
+    role = db.Column(db.String(10), default="user", nullable=False)  # user/admin
+    is_blocked = db.Column(db.Boolean, default=False, nullable=False)
     is_email_verified = db.Column(db.Boolean, default=False, nullable=False)
 
     orders = db.relationship("Order", backref="user", lazy=True)
@@ -148,8 +152,8 @@ class Product(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(200), nullable=False)
     description = db.Column(db.Text, nullable=False)
-    price = db.Column(db.Integer, nullable=False)  # цена в тенге
-    image = db.Column(db.String(255), nullable=True)  # файл в static/uploads
+    price = db.Column(db.Integer, nullable=False)
+    image = db.Column(db.String(255), nullable=True)  # static/uploads/...
 
 
 class CartItem(db.Model):
@@ -169,10 +173,8 @@ class Order(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
 
-    # статус заказа: new, in_progress, completed
-    status = db.Column(db.String(20), default="new", nullable=False)
-    # флаг: заказ подтверждён админом
-    confirmed = db.Column(db.Boolean, default=False, nullable=False)
+    status = db.Column(db.String(20), default="new", nullable=False)  # new/in_progress/completed
+    confirmed = db.Column(db.Boolean, default=False, nullable=False)  # подтверждён админом
 
     items = db.relationship("OrderItem", backref="order", lazy=True)
 
@@ -188,6 +190,18 @@ class OrderItem(db.Model):
     product = db.relationship("Product")
 
 
+class EmailLog(db.Model):
+    __tablename__ = "email_logs"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    email = db.Column(db.String(120), nullable=False)
+    subject = db.Column(db.String(255), nullable=False)
+    status = db.Column(db.String(20), nullable=False)  # sent/failed
+    error = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
+
+
 # -----------------------------------
 #       ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # -----------------------------------
@@ -200,7 +214,8 @@ def get_current_user():
     user_id = session.get("user_id")
     if user_id is None:
         return None
-    return User.query.get(user_id)
+    return db.session.get(User, user_id)
+
 
 
 def login_required(f):
@@ -223,10 +238,6 @@ def admin_required(f):
 
 
 def send_telegram_message(text: str):
-    """
-    Отправка текстового сообщения в Telegram-бот (админу/в группу).
-    Использует TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID из .env.
-    """
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
     try:
@@ -241,35 +252,40 @@ def send_telegram_message(text: str):
         print(f"Ошибка отправки сообщения в Telegram: {e}")
 
 
-def send_email(to_email: str, subject: str, body: str):
-    """
-    Отправка письма с подтверждением email.
-    Если SMTP не настроен, просто выводит письмо в консоль.
-    """
-    if not SMTP_HOST or not SMTP_USER or not SMTP_PASSWORD:
-        print("=== EMAIL (эмуляция, SMTP не настроен) ===")
-        print("Кому:", to_email)
-        print("Тема:", subject)
-        print("Текст:\n", body)
-        print("=== КОНЕЦ ПИСЬМА ===")
-        return
+def send_email(to_email: str, subject: str, body: str, user: User | None = None):
+    api_key = os.getenv("SENDGRID_API_KEY")
+    mail_from = os.getenv("MAIL_FROM")
 
-    msg = MIMEText(body, "plain", "utf-8")
-    msg["Subject"] = subject
-    msg["From"] = SMTP_USER
-    msg["To"] = to_email
+    log = EmailLog(
+        user_id=user.id if user else None,
+        email=to_email,
+        subject=subject,
+        status="failed"
+    )
 
     try:
-        if SMTP_USE_TLS:
-            server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
-            server.starttls()
-        else:
-            server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT)
-        server.login(SMTP_USER, SMTP_PASSWORD)
-        server.send_message(msg)
-        server.quit()
+        if not api_key or not mail_from:
+            raise Exception("SendGrid не настроен")
+
+        message = Mail(
+            from_email=mail_from,
+            to_emails=to_email,
+            subject=subject,
+            plain_text_content=body
+        )
+
+        sg = SendGridAPIClient(api_key)
+        sg.send(message)
+
+        log.status = "sent"
+
     except Exception as e:
-        print(f"Ошибка отправки email: {e}")
+        log.error = str(e)
+        print("Ошибка отправки email:", e)
+
+    finally:
+        db.session.add(log)
+        db.session.commit()
 
 
 def generate_email_token(email: str) -> str:
@@ -295,7 +311,7 @@ def send_verification_email(user: User):
         f"Для подтверждения email перейдите по ссылке:\n{verify_url}\n\n"
         f"Если вы не регистрировались на сайте PC Shop, просто проигнорируйте это письмо."
     )
-    send_email(user.email, subject, body)
+    send_email(user.email, subject, body, user=user)
 
 
 @app.context_processor
@@ -318,21 +334,13 @@ def inject_globals():
 # -----------------------------------
 
 def is_valid_name(name: str) -> bool:
-    """
-    Допускаем только буквы (латиница/кириллица), пробел и дефис.
-    """
     return bool(re.match(r"^[A-Za-zА-Яа-яЁё\- ]+$", name))
 
 
 def is_valid_user_email(email: str) -> bool:
-    """
-    Для обычных пользователей запрещаем домены типа .local.
-    Разрешаем популярные доменные зоны.
-    """
     if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
         return False
 
-    # .local оставляем только для сидерного админа, в регистрации запрещаем
     if email.endswith(".local"):
         return False
 
@@ -343,9 +351,6 @@ def is_valid_user_email(email: str) -> bool:
 
 
 def is_valid_kz_phone(phone: str) -> bool:
-    """
-    Формат Казахстана: +7XXXXXXXXXX (всего 12 символов).
-    """
     return bool(re.match(r"^\+7\d{10}$", phone))
 
 
@@ -368,13 +373,11 @@ def register():
 
         errors = []
 
-        # Email
         if not email:
             errors.append("Email обязателен.")
         elif not is_valid_user_email(email):
             errors.append("Email имеет недопустимый формат. Используйте домены .com, .ru, .kz, .net, .org, .mail и т.п.")
 
-        # Пароль
         if not password:
             errors.append("Пароль обязателен.")
         elif len(password) < 6:
@@ -382,7 +385,6 @@ def register():
         if password != password2:
             errors.append("Пароли не совпадают.")
 
-        # ФИО
         if not last_name:
             errors.append("Фамилия обязательна.")
         elif not is_valid_name(last_name):
@@ -398,19 +400,16 @@ def register():
         elif not is_valid_name(middle_name):
             errors.append("Отчество может содержать только буквы, пробел и дефис.")
 
-        # Город
         if not city:
             errors.append("Город обязателен.")
         elif city not in CITIES:
             errors.append("Выберите город из списка.")
 
-        # Телефон
         if not phone:
             errors.append("Номер телефона обязателен.")
         elif not is_valid_kz_phone(phone):
             errors.append("Номер телефона должен быть в формате +7XXXXXXXXXX (Казахстан).")
 
-        # Уже есть такой email?
         if User.query.filter_by(email=email).first():
             errors.append("Пользователь с таким email уже существует.")
 
@@ -429,7 +428,6 @@ def register():
                 },
             )
 
-        # Создаём пользователя
         user = User(
             email=email,
             password_hash=generate_password_hash(password),
@@ -445,13 +443,9 @@ def register():
         db.session.add(user)
         db.session.commit()
 
-        # Отправляем письмо для подтверждения email
-        try:
-            send_verification_email(user)
-            flash("Регистрация прошла успешно! Проверьте почту и подтвердите email.", "success")
-        except Exception as e:
-            print("Ошибка при отправке письма:", e)
-            flash("Регистрация прошла успешно, но не удалось отправить письмо для подтверждения email.", "warning")
+        # письмо подтверждения (если не настроено — будет фолбэк/лог)
+        send_verification_email(user)
+        flash("Регистрация прошла успешно! Проверьте почту и подтвердите email.", "success")
 
         return redirect(url_for("login"))
 
@@ -475,9 +469,9 @@ def verify_email(token):
     else:
         user.is_email_verified = True
         db.session.commit()
-        flash("Email успешно подтверждён! Теперь вы можете войти.", "success")
+        flash("Email успешно подтверждён! Теперь вы можете оформлять заказы.", "success")
 
-    return redirect(url_for("login"))
+    return redirect(url_for("profile"))
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -493,18 +487,45 @@ def login():
                 flash("Ваш аккаунт заблокирован. Обратитесь к администратору.", "danger")
                 return redirect(url_for("login"))
 
-            if not user.is_email_verified and user.role != "admin":
-                flash("Подтвердите email, перейдя по ссылке в письме.", "warning")
-                return redirect(url_for("login"))
-
             session["user_id"] = user.id
             session["role"] = user.role
-            flash("Вы успешно вошли в аккаунт.", "success")
+
+            if not user.is_email_verified and user.role != "admin":
+                flash("⚠ Email не подтверждён. Оформление заказов будет недоступно, пока не подтвердите почту.", "warning")
+            else:
+                flash("Вы успешно вошли в аккаунт.", "success")
+
             return redirect(url_for("profile"))
         else:
             flash("Неверный email или пароль.", "danger")
 
     return render_template("auth/login.html")
+
+
+@app.route("/resend-verification")
+@login_required
+def resend_verification():
+    """
+    Повторная отправка письма подтверждения:
+    - не чаще 1 раза в 60 секунд
+    - пишет лог в БД
+    """
+    user = get_current_user()
+
+    if user.is_email_verified:
+        flash("Email уже подтверждён.", "info")
+        return redirect(url_for("profile"))
+
+    last_sent = session.get("last_verification_email_time")
+    if last_sent and time() - last_sent < 60:
+        flash("Подождите 60 секунд перед повторной отправкой письма.", "warning")
+        return redirect(url_for("profile"))
+
+    send_verification_email(user)
+    session["last_verification_email_time"] = time()
+
+    flash("Письмо отправлено повторно. Проверьте почту.", "success")
+    return redirect(url_for("profile"))
 
 
 @app.route("/logout")
@@ -521,18 +542,9 @@ def logout():
 @app.route("/")
 def index():
     promos = [
-        {
-            "title": "Скидка 20% на игровые ноутбуки",
-            "text": "Только до конца месяца! Собери идеальный игровой сетап.",
-        },
-        {
-            "title": "Сборка ПК под ключ",
-            "text": "Подберём комплектующие и соберём ПК под твои задачи.",
-        },
-        {
-            "title": "Бесплатная диагностика",
-            "text": "Принеси свой ПК в сервис-центр и получи первичную диагностику бесплатно.",
-        },
+        {"title": "Скидка 20% на игровые ноутбуки", "text": "Только до конца месяца! Собери идеальный игровой сетап."},
+        {"title": "Сборка ПК под ключ", "text": "Подберём комплектующие и соберём ПК под твои задачи."},
+        {"title": "Бесплатная диагностика", "text": "Принеси свой ПК в сервис-центр и получи первичную диагностику бесплатно."},
     ]
     return render_template("index.html", promos=promos)
 
@@ -604,8 +616,13 @@ def remove_from_cart(item_id):
 @login_required
 def checkout():
     user = get_current_user()
-    items = CartItem.query.filter_by(user_id=user.id).all()
 
+    # ✅ Запрещаем оформление заказа, пока email не подтвержден (кроме админа)
+    if not user.is_email_verified and user.role != "admin":
+        flash("⚠ Подтвердите email, чтобы оформить заказ. Можно нажать «Отправить письмо повторно».", "warning")
+        return redirect(url_for("profile"))
+
+    items = CartItem.query.filter_by(user_id=user.id).all()
     if not items:
         flash("Корзина пуста.", "warning")
         return redirect(url_for("cart"))
@@ -614,7 +631,7 @@ def checkout():
 
     order = Order(user_id=user.id, status="new", confirmed=False)
     db.session.add(order)
-    db.session.flush()  # чтобы у order появился id
+    db.session.flush()
 
     for item in items:
         order_item = OrderItem(
@@ -627,7 +644,7 @@ def checkout():
 
     db.session.commit()
 
-    # Уведомление в Telegram
+    # Telegram уведомление
     lines = []
     lines.append(f"🛒 <b>Новый заказ #{order.id}</b>")
     lines.append("")
@@ -638,11 +655,9 @@ def checkout():
     lines.append("")
     lines.append("<b>Состав заказа:</b>")
 
-    for item in order.items:
-        line_sum = item.product.price * item.quantity
-        lines.append(
-            f"- {item.product.name} — {item.quantity} шт. × {item.product.price} ₸ = {line_sum} ₸"
-        )
+    for oi in order.items:
+        line_sum = oi.product.price * oi.quantity
+        lines.append(f"- {oi.product.name} — {oi.quantity} шт. × {oi.product.price} ₸ = {line_sum} ₸")
 
     lines.append("")
     lines.append(f"<b>Итого:</b> {total} ₸")
@@ -650,8 +665,7 @@ def checkout():
     lines.append(f"<b>Статус:</b> new (новый)")
     lines.append(f"<b>Подтверждён админом:</b> нет")
 
-    message_text = "\n".join(lines)
-    send_telegram_message(message_text)
+    send_telegram_message("\n".join(lines))
 
     flash("Заказ успешно оформлен!", "success")
     return redirect(url_for("profile"))
@@ -685,16 +699,12 @@ def profile_edit():
 
         if not last_name or not is_valid_name(last_name):
             errors.append("Фамилия обязательна и может содержать только буквы, пробел и дефис.")
-
         if not first_name or not is_valid_name(first_name):
             errors.append("Имя обязательно и может содержать только буквы, пробел и дефис.")
-
         if not middle_name or not is_valid_name(middle_name):
             errors.append("Отчество обязательно и может содержать только буквы, пробел и дефис.")
-
         if not city or city not in CITIES:
             errors.append("Выберите город из списка.")
-
         if not phone or not is_valid_kz_phone(phone):
             errors.append("Номер телефона должен быть в формате +7XXXXXXXXXX (Казахстан).")
 
@@ -753,7 +763,6 @@ def admin_add_product():
         image_file = request.files.get("image")
 
         errors = []
-
         if not name:
             errors.append("Название товара обязательно.")
         if not description:
@@ -848,6 +857,7 @@ def admin_update_order(order_id):
     flash(f"Заказ #{order.id} обновлён.", "success")
     return redirect(url_for("admin_panel"))
 
+
 @app.route("/admin/orders/<int:order_id>/delete", methods=["POST"])
 @admin_required
 def admin_delete_order(order_id):
@@ -869,5 +879,6 @@ def admin_delete_order(order_id):
 # -----------------------------------
 
 if __name__ == "__main__":
+    # для локалки можно один раз создать таблицы:
+    # with app.app_context(): db.create_all()
     app.run(debug=True)
-
