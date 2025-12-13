@@ -848,6 +848,21 @@ def admin_update_order(order_id):
     flash(f"Заказ #{order.id} обновлён.", "success")
     return redirect(url_for("admin_panel"))
 
+@app.route("/admin/orders/<int:order_id>/delete", methods=["POST"])
+@admin_required
+def admin_delete_order(order_id):
+    order = Order.query.get_or_404(order_id)
+
+    # сначала удаляем позиции заказа
+    OrderItem.query.filter_by(order_id=order.id).delete()
+
+    # затем сам заказ
+    db.session.delete(order)
+    db.session.commit()
+
+    flash(f"Заказ #{order.id} удалён.", "info")
+    return redirect(url_for("admin_panel"))
+
 
 # -----------------------------------
 #          ТОЧКА ВХОДА

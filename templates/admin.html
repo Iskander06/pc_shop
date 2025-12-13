@@ -137,21 +137,42 @@
                   </ul>
                 </td>
                 <td class="text-end">
-                  <form method="post" action="{{ url_for('admin_update_order', order_id=o.id) }}" class="d-flex flex-column gap-1">
-                    <select name="status" class="form-select form-select-sm">
-                      <option value="new" {% if o.status == 'new' %}selected{% endif %}>Новый</option>
-                      <option value="in_progress" {% if o.status == 'in_progress' %}selected{% endif %}>В работе</option>
-                      <option value="completed" {% if o.status == 'completed' %}selected{% endif %}>Выполнен</option>
-                    </select>
-                    <div class="form-check mt-1">
-                      <input class="form-check-input" type="checkbox" name="confirmed" id="confirm_{{ o.id }}" {% if o.confirmed %}checked{% endif %}>
-                      <label class="form-check-label small" for="confirm_{{ o.id }}">
-                        Подтверждён
-                      </label>
-                    </div>
-                    <button class="btn btn-sm btn-primary mt-1">Сохранить</button>
-                  </form>
-                </td>
+  <!-- Обновление статуса заказа -->
+  <form method="post"
+        action="{{ url_for('admin_update_order', order_id=o.id) }}"
+        class="d-flex flex-column gap-1 mb-1">
+    <select name="status" class="form-select form-select-sm">
+      <option value="new" {% if o.status == 'new' %}selected{% endif %}>Новый</option>
+      <option value="in_progress" {% if o.status == 'in_progress' %}selected{% endif %}>В работе</option>
+      <option value="completed" {% if o.status == 'completed' %}selected{% endif %}>Выполнен</option>
+    </select>
+
+    <div class="form-check mt-1">
+      <input class="form-check-input"
+             type="checkbox"
+             name="confirmed"
+             id="confirm_{{ o.id }}"
+             {% if o.confirmed %}checked{% endif %}>
+      <label class="form-check-label small" for="confirm_{{ o.id }}">
+        Подтверждён
+      </label>
+    </div>
+
+    <button class="btn btn-sm btn-primary mt-1">
+      Сохранить
+    </button>
+  </form>
+
+  <!-- Удаление заказа -->
+  <form method="post"
+        action="{{ url_for('admin_delete_order', order_id=o.id) }}"
+        onsubmit="return confirm('Вы уверены, что хотите удалить заказ #{{ o.id }}?');">
+    <button class="btn btn-sm btn-outline-danger w-100">
+      Удалить заказ
+    </button>
+  </form>
+</td>
+
               </tr>
               {% endfor %}
             </tbody>
