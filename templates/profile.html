@@ -1,24 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
   <h1 class="mb-4 fade-in-up">Личный кабинет</h1>
-  
-{# ===== БЛОК ПОДТВЕРЖДЕНИЯ EMAIL ===== #}
-{% if not user.is_email_verified %}
-  <div class="alert alert-warning fade-in-up d-flex align-items-center justify-content-between flex-wrap">
-    <div>
-      <strong>⚠ Email не подтверждён.</strong><br>
-      Некоторые функции (оформление заказов) недоступны.
-    </div>
-
-    <a href="{{ url_for('resend_verification') }}"
-       id="resendBtn"
-       class="btn btn-sm btn-outline-primary ms-2 mt-2 mt-md-0">
-      📩 Отправить письмо повторно
-      <span id="resendTimer"></span>
-    </a>
-  </div>
-{% endif %}
-
 
   <div class="row g-4 fade-in-up">
     <div class="col-md-5">
@@ -54,6 +36,7 @@
 
     <div class="col-md-7">
       <h3 class="mb-3">Ваши заказы</h3>
+
       {% if orders %}
         <div class="accordion" id="ordersAccordion">
           {% for order in orders %}
@@ -80,13 +63,19 @@
                 {% else %}
                   <span class="badge bg-secondary ms-2">Ожидает подтверждения</span>
                 {% endif %}
+
+                {% if order.payment_status == 'paid' %}
+                  <span class="badge bg-success ms-2">Оплачен</span>
+                {% else %}
+                  <span class="badge bg-danger ms-2">Не оплачен</span>
+                {% endif %}
               </button>
             </h2>
 
             <div id="collapse{{ order.id }}" class="accordion-collapse collapse"
                  data-bs-parent="#ordersAccordion">
               <div class="accordion-body">
-                <ul class="mb-2">
+                <ul class="mb-3">
                   {% for item in order.items %}
                   <li>
                     {{ item.product.name }} — {{ item.quantity }} шт.
@@ -94,6 +83,20 @@
                   </li>
                   {% endfor %}
                 </ul>
+
+                {% if order.payment_status != 'paid' %}
+                  <form method="post" action="{{ url_for('pay_order', order_id=order.id) }}">
+                    <button type="submit" class="btn btn-success">
+                      💳 Оплатить заказ
+                    </button>
+                    <small class="text-muted ms-2">Откроется Stripe Checkout (sandbox)</small>
+                  </form>
+                {% else %}
+                  <div class="alert alert-success mb-0">
+                    ✅ Этот заказ уже оплачен.
+                  </div>
+                {% endif %}
+
               </div>
             </div>
           </div>
@@ -104,49 +107,4 @@
       {% endif %}
     </div>
   </div>
-  <script>
-document.addEventListener("DOMContentLoaded", function () {
-  const btn = document.getElementById("resendBtn");
-  const timerSpan = document.getElementById("resendTimer");
-
-  if (!btn) return;
-
-  let cooldown = 60;
-  let lastClick = sessionStorage.getItem("lastEmailSend");
-
-  if (lastClick) {
-    let diff = Math.floor((Date.now() - lastClick) / 1000);
-    if (diff < cooldown) {
-      startTimer(cooldown - diff);
-    }
-  }
-
-  btn.addEventListener("click", function () {
-    sessionStorage.setItem("lastEmailSend", Date.now());
-    startTimer(cooldown);
-  });
-
-  function startTimer(seconds) {
-    btn.classList.add("disabled");
-    btn.setAttribute("aria-disabled", "true");
-
-    let remaining = seconds;
-    timerSpan.innerText = ` (${remaining} сек)`;
-
-    let interval = setInterval(() => {
-      remaining--;
-      timerSpan.innerText = ` (${remaining} сек)`;
-
-      if (remaining <= 0) {
-        clearInterval(interval);
-        btn.classList.remove("disabled");
-        btn.removeAttribute("aria-disabled");
-        timerSpan.innerText = "";
-        sessionStorage.removeItem("lastEmailSend");
-      }
-    }, 1000);
-  }
-});
-</script>
-
 {% endblock %}

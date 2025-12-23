@@ -1,10 +1,11 @@
 import os
 import uuid
 import re
-from time import time
 from functools import wraps
+from datetime import datetime
 
 import requests
+import stripe
 from flask import (
     Flask, render_template, url_for,
     redirect, request, session, flash
@@ -13,15 +14,6 @@ from flask_sqlalchemy import SQLAlchemy
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
-
-# SendGrid (опционально: если не установлен, будет фолбэк на "печать письма в консоль")
-try:
-    from sendgrid import SendGridAPIClient
-    from sendgrid.helpers.mail import Mail
-    SENDGRID_AVAILABLE = True
-except Exception:
-    SENDGRID_AVAILABLE = False
 
 
 # -----------------------------------
@@ -32,8 +24,6 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 app = Flask(__name__)
-
-# SECRET KEY
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-key")
 
 
@@ -44,7 +34,6 @@ app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-key")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if DATABASE_URL:
-    # Render / production
     if DATABASE_URL.startswith("postgres://"):
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
     elif DATABASE_URL.startswith("postgresql://"):
@@ -52,7 +41,6 @@ if DATABASE_URL:
 
     app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
 else:
-    # Local development
     db_user = os.getenv("DB_USER", "postgres")
     db_pass = os.getenv("DB_PASS", "1234")
     db_host = os.getenv("DB_HOST", "localhost")
@@ -66,9 +54,11 @@ else:
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 print("DB URI:", app.config["SQLALCHEMY_DATABASE_URI"])
 
+db = SQLAlchemy(app)
+
 
 # -----------------------------------
-#     ЗАГРУЗКА ФАЙЛОВ / SQLALCHEMY
+#       ФАЙЛЫ / ЗАГРУЗКИ
 # -----------------------------------
 
 UPLOAD_FOLDER = os.path.join(app.static_folder, "uploads")
@@ -81,11 +71,9 @@ app.config["AVATAR_FOLDER"] = AVATAR_FOLDER
 
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
 
-db = SQLAlchemy(app)
-
 
 # -----------------------------------
-#       ПЕРЕМЕННЫЕ / ИНТЕГРАЦИИ
+#       ИНТЕГРАЦИИ / ПЕРЕМЕННЫЕ
 # -----------------------------------
 
 # Telegram
@@ -93,25 +81,15 @@ TG_BOT_LINK = os.getenv("TG_BOT_LINK", "https://t.me/your_bot_here")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Email via SendGrid
-SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
-MAIL_FROM = os.getenv("MAIL_FROM")  # например: "no-reply@yourdomain.com"
+# Stripe (sandbox)
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+SITE_URL = os.getenv("SITE_URL", "http://127.0.0.1:5000")
 
 # Города
 CITIES = [
-    "Алматы",
-    "Астана",
-    "Шымкент",
-    "Караганда",
-    "Актобе",
-    "Тараз",
-    "Павлодар",
-    "Усть-Каменогорск",
-    "Семей",
-    "Костанай",
-    "Кызылорда",
-    "Уральск",
-    "Петропавловск",
+    "Алматы", "Астана", "Шымкент", "Караганда", "Актобе", "Тараз",
+    "Павлодар", "Усть-Каменогорск", "Семей", "Костанай", "Кызылорда",
+    "Уральск", "Петропавловск",
 ]
 
 
@@ -137,6 +115,8 @@ class User(db.Model):
 
     role = db.Column(db.String(10), default="user", nullable=False)  # user/admin
     is_blocked = db.Column(db.Boolean, default=False, nullable=False)
+
+    # поле оставляем, но НЕ используем (проверка почты отключена)
     is_email_verified = db.Column(db.Boolean, default=False, nullable=False)
 
     orders = db.relationship("Order", backref="user", lazy=True)
@@ -152,8 +132,8 @@ class Product(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(200), nullable=False)
     description = db.Column(db.Text, nullable=False)
-    price = db.Column(db.Integer, nullable=False)
-    image = db.Column(db.String(255), nullable=True)  # static/uploads/...
+    price = db.Column(db.Integer, nullable=False)  # тенге
+    image = db.Column(db.String(255), nullable=True)
 
 
 class CartItem(db.Model):
@@ -174,7 +154,12 @@ class Order(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
 
     status = db.Column(db.String(20), default="new", nullable=False)  # new/in_progress/completed
-    confirmed = db.Column(db.Boolean, default=False, nullable=False)  # подтверждён админом
+    confirmed = db.Column(db.Boolean, default=False, nullable=False)
+
+    # ✅ Оплата
+    payment_status = db.Column(db.String(20), default="unpaid", nullable=False)  # unpaid/paid
+    stripe_session_id = db.Column(db.String(255), nullable=True)
+    paid_at = db.Column(db.DateTime, nullable=True)
 
     items = db.relationship("OrderItem", backref="order", lazy=True)
 
@@ -190,18 +175,6 @@ class OrderItem(db.Model):
     product = db.relationship("Product")
 
 
-class EmailLog(db.Model):
-    __tablename__ = "email_logs"
-
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
-    email = db.Column(db.String(120), nullable=False)
-    subject = db.Column(db.String(255), nullable=False)
-    status = db.Column(db.String(20), nullable=False)  # sent/failed
-    error = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, server_default=db.func.now())
-
-
 # -----------------------------------
 #       ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # -----------------------------------
@@ -215,7 +188,6 @@ def get_current_user():
     if user_id is None:
         return None
     return db.session.get(User, user_id)
-
 
 
 def login_required(f):
@@ -242,76 +214,10 @@ def send_telegram_message(text: str):
         return
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        data = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": text,
-            "parse_mode": "HTML",
-        }
+        data = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}
         requests.post(url, data=data, timeout=5)
     except Exception as e:
         print(f"Ошибка отправки сообщения в Telegram: {e}")
-
-
-def send_email(to_email: str, subject: str, body: str, user: User | None = None):
-    api_key = os.getenv("SENDGRID_API_KEY")
-    mail_from = os.getenv("MAIL_FROM")
-
-    log = EmailLog(
-        user_id=user.id if user else None,
-        email=to_email,
-        subject=subject,
-        status="failed"
-    )
-
-    try:
-        if not api_key or not mail_from:
-            raise Exception("SendGrid не настроен")
-
-        message = Mail(
-            from_email=mail_from,
-            to_emails=to_email,
-            subject=subject,
-            plain_text_content=body
-        )
-
-        sg = SendGridAPIClient(api_key)
-        sg.send(message)
-
-        log.status = "sent"
-
-    except Exception as e:
-        log.error = str(e)
-        print("Ошибка отправки email:", e)
-
-    finally:
-        db.session.add(log)
-        db.session.commit()
-
-
-def generate_email_token(email: str) -> str:
-    s = URLSafeTimedSerializer(app.config["SECRET_KEY"])
-    return s.dumps(email)
-
-
-def confirm_email_token(token: str, max_age: int = 60 * 60 * 24) -> str | None:
-    s = URLSafeTimedSerializer(app.config["SECRET_KEY"])
-    try:
-        email = s.loads(token, max_age=max_age)
-        return email
-    except (BadSignature, SignatureExpired):
-        return None
-
-
-def send_verification_email(user: User):
-    token = generate_email_token(user.email)
-    verify_url = url_for("verify_email", token=token, _external=True)
-    subject = "Подтверждение регистрации в PC Shop"
-    body = (
-        f"Здравствуйте, {user.first_name}!\n\n"
-        f"Для подтверждения email перейдите по ссылке:\n{verify_url}\n\n"
-        f"Если вы не регистрировались на сайте PC Shop, просто проигнорируйте это письмо."
-    )
-    send_email(user.email, subject, body, user=user)
 
 
 @app.context_processor
@@ -340,10 +246,8 @@ def is_valid_name(name: str) -> bool:
 def is_valid_user_email(email: str) -> bool:
     if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
         return False
-
     if email.endswith(".local"):
         return False
-
     domain_part = email.split("@")[-1]
     tld = domain_part.split(".")[-1].lower()
     allowed_tlds = {"com", "ru", "kz", "net", "org", "mail"}
@@ -438,40 +342,15 @@ def register():
             phone=phone,
             role="user",
             public_id=str(uuid.uuid4()),
-            is_email_verified=False,
+            is_email_verified=False,  # не используется
         )
         db.session.add(user)
         db.session.commit()
 
-        # письмо подтверждения (если не настроено — будет фолбэк/лог)
-        send_verification_email(user)
-        flash("Регистрация прошла успешно! Проверьте почту и подтвердите email.", "success")
-
+        flash("Регистрация прошла успешно! Теперь вы можете войти.", "success")
         return redirect(url_for("login"))
 
     return render_template("auth/register.html", form_data={})
-
-
-@app.route("/verify-email/<token>")
-def verify_email(token):
-    email = confirm_email_token(token)
-    if not email:
-        flash("Ссылка для подтверждения email недействительна или устарела.", "danger")
-        return redirect(url_for("login"))
-
-    user = User.query.filter_by(email=email).first()
-    if not user:
-        flash("Пользователь не найден.", "danger")
-        return redirect(url_for("login"))
-
-    if user.is_email_verified:
-        flash("Email уже был подтверждён ранее.", "info")
-    else:
-        user.is_email_verified = True
-        db.session.commit()
-        flash("Email успешно подтверждён! Теперь вы можете оформлять заказы.", "success")
-
-    return redirect(url_for("profile"))
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -489,43 +368,12 @@ def login():
 
             session["user_id"] = user.id
             session["role"] = user.role
-
-            if not user.is_email_verified and user.role != "admin":
-                flash("⚠ Email не подтверждён. Оформление заказов будет недоступно, пока не подтвердите почту.", "warning")
-            else:
-                flash("Вы успешно вошли в аккаунт.", "success")
-
+            flash("Вы успешно вошли в аккаунт.", "success")
             return redirect(url_for("profile"))
         else:
             flash("Неверный email или пароль.", "danger")
 
     return render_template("auth/login.html")
-
-
-@app.route("/resend-verification")
-@login_required
-def resend_verification():
-    """
-    Повторная отправка письма подтверждения:
-    - не чаще 1 раза в 60 секунд
-    - пишет лог в БД
-    """
-    user = get_current_user()
-
-    if user.is_email_verified:
-        flash("Email уже подтверждён.", "info")
-        return redirect(url_for("profile"))
-
-    last_sent = session.get("last_verification_email_time")
-    if last_sent and time() - last_sent < 60:
-        flash("Подождите 60 секунд перед повторной отправкой письма.", "warning")
-        return redirect(url_for("profile"))
-
-    send_verification_email(user)
-    session["last_verification_email_time"] = time()
-
-    flash("Письмо отправлено повторно. Проверьте почту.", "success")
-    return redirect(url_for("profile"))
 
 
 @app.route("/logout")
@@ -617,11 +465,6 @@ def remove_from_cart(item_id):
 def checkout():
     user = get_current_user()
 
-    # ✅ Запрещаем оформление заказа, пока email не подтвержден (кроме админа)
-    if not user.is_email_verified and user.role != "admin":
-        flash("⚠ Подтвердите email, чтобы оформить заказ. Можно нажать «Отправить письмо повторно».", "warning")
-        return redirect(url_for("profile"))
-
     items = CartItem.query.filter_by(user_id=user.id).all()
     if not items:
         flash("Корзина пуста.", "warning")
@@ -629,17 +472,12 @@ def checkout():
 
     total = sum(item.product.price * item.quantity for item in items)
 
-    order = Order(user_id=user.id, status="new", confirmed=False)
+    order = Order(user_id=user.id, status="new", confirmed=False, payment_status="unpaid")
     db.session.add(order)
     db.session.flush()
 
     for item in items:
-        order_item = OrderItem(
-            order_id=order.id,
-            product_id=item.product_id,
-            quantity=item.quantity
-        )
-        db.session.add(order_item)
+        db.session.add(OrderItem(order_id=order.id, product_id=item.product_id, quantity=item.quantity))
         db.session.delete(item)
 
     db.session.commit()
@@ -661,13 +499,97 @@ def checkout():
 
     lines.append("")
     lines.append(f"<b>Итого:</b> {total} ₸")
-    lines.append("")
-    lines.append(f"<b>Статус:</b> new (новый)")
-    lines.append(f"<b>Подтверждён админом:</b> нет")
+    lines.append(f"<b>Оплата:</b> unpaid")
 
     send_telegram_message("\n".join(lines))
 
-    flash("Заказ успешно оформлен!", "success")
+    flash("Заказ успешно оформлен! Теперь можно оплатить в профиле.", "success")
+    return redirect(url_for("profile"))
+
+
+# -----------------------------------
+#          ОПЛАТА (Stripe Checkout)
+# -----------------------------------
+
+@app.route("/pay/<int:order_id>", methods=["POST"])
+@login_required
+def pay_order(order_id):
+    if not stripe.api_key:
+        flash("Stripe не настроен: нет STRIPE_SECRET_KEY", "danger")
+        return redirect(url_for("profile"))
+
+    user = get_current_user()
+    order = Order.query.get_or_404(order_id)
+
+    if order.user_id != user.id:
+        return "Запрещено", 403
+
+    if order.payment_status == "paid":
+        flash("Этот заказ уже оплачен.", "info")
+        return redirect(url_for("profile"))
+
+    total_amount = sum(item.product.price * item.quantity for item in order.items)
+    if total_amount <= 0:
+        flash("Сумма заказа некорректна.", "danger")
+        return redirect(url_for("profile"))
+
+    # Stripe принимает в минимальных единицах валюты. Для KZT обычно *100.
+    amount = int(total_amount * 100)
+
+    try:
+        sess = stripe.checkout.Session.create(
+            mode="payment",
+            line_items=[{
+                "price_data": {
+                    "currency": "kzt",
+                    "product_data": {"name": f"Заказ #{order.id} (PC Shop)"},
+                    "unit_amount": amount,
+                },
+                "quantity": 1,
+            }],
+            success_url=f"{SITE_URL}/payment/success?order_id={order.id}",
+            cancel_url=f"{SITE_URL}/payment/cancel?order_id={order.id}",
+            metadata={"order_id": str(order.id), "user_id": str(user.id)},
+        )
+
+        order.stripe_session_id = sess.id
+        db.session.commit()
+
+        return redirect(sess.url, code=303)
+
+    except Exception as e:
+        print("Stripe error:", e)
+        flash("Ошибка создания оплаты. Проверь Stripe ключи и попробуй снова.", "danger")
+        return redirect(url_for("profile"))
+
+
+@app.route("/payment/success")
+@login_required
+def payment_success():
+    user = get_current_user()
+    order_id = request.args.get("order_id", type=int)
+    if not order_id:
+        flash("Некорректный заказ.", "danger")
+        return redirect(url_for("profile"))
+
+    order = Order.query.get_or_404(order_id)
+    if order.user_id != user.id:
+        return "Запрещено", 403
+
+    # Без webhook это “упрощённо”: считаем успешным переход на success.
+    order.payment_status = "paid"
+    order.paid_at = datetime.utcnow()
+    db.session.commit()
+
+    flash(f"Оплата успешна! Заказ #{order.id} отмечен как оплаченный.", "success")
+    return redirect(url_for("profile"))
+
+
+@app.route("/payment/cancel")
+@login_required
+def payment_cancel():
+    order_id = request.args.get("order_id")
+    flash(f"Оплата отменена (заказ #{order_id}).", "warning")
     return redirect(url_for("profile"))
 
 
@@ -679,7 +601,7 @@ def checkout():
 @login_required
 def profile():
     user = get_current_user()
-    orders = Order.query.filter_by(user_id=user.id).all()
+    orders = Order.query.filter_by(user_id=user.id).order_by(Order.id.desc()).all()
     return render_template("profile.html", user=user, orders=orders)
 
 
@@ -785,12 +707,7 @@ def admin_add_product():
                 flash(e, "danger")
             return render_template("admin_add_product.html")
 
-        product = Product(
-            name=name,
-            description=description,
-            price=int(price_raw),
-            image=filename or None,
-        )
+        product = Product(name=name, description=description, price=int(price_raw), image=filename or None)
         db.session.add(product)
         db.session.commit()
 
@@ -862,11 +779,7 @@ def admin_update_order(order_id):
 @admin_required
 def admin_delete_order(order_id):
     order = Order.query.get_or_404(order_id)
-
-    # сначала удаляем позиции заказа
     OrderItem.query.filter_by(order_id=order.id).delete()
-
-    # затем сам заказ
     db.session.delete(order)
     db.session.commit()
 
@@ -879,6 +792,7 @@ def admin_delete_order(order_id):
 # -----------------------------------
 
 if __name__ == "__main__":
-    # для локалки можно один раз создать таблицы:
-    # with app.app_context(): db.create_all()
+    # Если нужно один раз создать таблицы на локалке:
+    # with app.app_context():
+    #     db.create_all()
     app.run(debug=True)
